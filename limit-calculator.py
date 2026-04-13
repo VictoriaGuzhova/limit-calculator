@@ -141,7 +141,7 @@ HTML_TEMPLATE = """
         <div class="examples">
             <span>Быстрые примеры: </span>
             <a onclick="fillExample('sin(x)/x', 'x', '0')">sin(x)/x</a>
-            <a onclick="fillExample('(1+1/n)**n', 'n', '∞')">(1+1/n)^n → e</a>
+            <a onclick="fillExample('(1+1/n)**n', 'n', '∞')">(1+1/n)^n</a>
             <a onclick="fillExample('1/x', 'x', '0')">1/x</a>
         </div>
         
@@ -177,28 +177,92 @@ HTML_TEMPLATE = """
 """
 
 def is_valid_expression(s, variable):
-    """Проверяет, что строка является корректным математическим выражением с заданной переменной."""
     try:
         expr = sp.sympify(s)
-        # Проверяем, что в выражении присутствует переменная (или это константа)
         free_symbols = expr.free_symbols
-        allowed_symbols = {sp.Symbol(variable)}
-        # Если есть символы, которых нет в разрешённых — ошибка
-        if not free_symbols.issubset(allowed_symbols):
-            other = free_symbols - allowed_symbols
+        allowed = {sp.Symbol(variable)}
+        if not free_symbols.issubset(allowed):
+            other = free_symbols - allowed
             return False, f"Выражение содержит посторонние переменные: {', '.join(str(s) for s in other)}"
         return True, expr
     except (sp.SympifyError, TypeError, ValueError) as e:
         return False, f"Не удалось распознать выражение: {e}"
 
 def parse_point(point_str):
-    """Преобразует строку с точкой в число или бесконечность SymPy."""
     p = point_str.strip()
     if p in ['∞', '+∞', 'oo', 'inf', 'infinity', 'бесконечность', 'беск']:
         return sp.oo
     if p in ['-∞', '-oo', '-inf', '-infinity', '-бесконечность', '-беск']:
         return -sp.oo
     return sp.sympify(p)
+
+def generate_steps(expression, var_str, point_val, direction, limit_raw):
+    """Генерирует текстовое описание шагов для популярных пределов."""
+    expr_str = expression.strip()
+    var = sp.Symbol(var_str)
+    
+    # 1. sin(x)/x при x->0
+    if expr_str == "sin(x)/x" and point_val == 0:
+        return ("1. Подстановка x=0 даёт неопределённость 0/0.\n"
+                "2. Применяем правило Лопиталя: (sin(x))' = cos(x), (x)' = 1.\n"
+                "3. Новый предел: lim cos(x)/1 = cos(0) = 1.\n"
+                "4. Ответ: 1.")
+    
+    # 2. 1/x при x->0 (разные направления)
+    if expr_str == "1/x" and point_val == 0:
+        if direction == '+':
+            return ("1. При x→0⁺ (x>0) функция 1/x неограниченно возрастает.\n"
+                    "2. Предел равен +∞.")
+        elif direction == '-':
+            return ("1. При x→0⁻ (x<0) функция 1/x неограниченно убывает.\n"
+                    "2. Предел равен -∞.")
+        else:
+            return ("1. Слева x→0⁻: 1/x → -∞.\n"
+                    "2. Справа x→0⁺: 1/x → +∞.\n"
+                    "3. Односторонние пределы различны → двусторонний предел не существует.")
+    
+    # 3. (1+1/n)^n при n→∞
+    if expr_str in ["(1+1/n)**n", "(1+1/n)^n"] and point_val == sp.oo:
+        return ("1. Это второй замечательный предел.\n"
+                "2. Известно, что lim_{n→∞} (1+1/n)^n = e.\n"
+                "3. Ответ: e (число Эйлера).")
+    
+    # 4. Полиномиальные/рациональные дроби при x→∞
+    if point_val == sp.oo or point_val == -sp.oo:
+        try:
+            num, den = sp.fraction(sp.sympify(expr_str))
+            if den == 1:
+                # Полином
+                lead = sp.LC(expr_str.subs(var, var))
+                return (f"1. Предел полинома на бесконечности определяется старшим членом.\n"
+                        f"2. Старший член: {lead} * {var}**{sp.degree(expr_str)}.\n"
+                        f"3. При x→∞ это выражение стремится к {'∞' if lead > 0 else '-∞'}.")
+            else:
+                deg_num = sp.degree(num, var)
+                deg_den = sp.degree(den, var)
+                if deg_num < deg_den:
+                    return (f"1. Степень числителя ({deg_num}) меньше степени знаменателя ({deg_den}).\n"
+                            f"2. Предел равен 0.")
+                elif deg_num == deg_den:
+                    coeff = sp.LC(num, var) / sp.LC(den, var)
+                    return (f"1. Степени числителя и знаменателя равны ({deg_num}).\n"
+                            f"2. Предел равен отношению старших коэффициентов: {coeff}.")
+                else:
+                    return (f"1. Степень числителя ({deg_num}) больше степени знаменателя ({deg_den}).\n"
+                            f"2. Предел равен ∞ (знак определяется отношением старших коэффициентов).")
+        except:
+            pass
+    
+    # 5. sin(1/x) при x->0
+    if expr_str == "sin(1/x)" and point_val == 0:
+        return ("1. При x→0 аргумент 1/x неограниченно растёт.\n"
+                "2. Функция sin(t) при t→∞ не имеет предела, она колеблется между -1 и 1.\n"
+                "3. Следовательно, предел не существует (но ограничен в [-1,1]).")
+    
+    # По умолчанию – короткое пояснение
+    return ("Предел вычислен аналитически с помощью библиотеки SymPy.\n"
+            "Использованы правила: арифметика пределов, замечательные пределы,\n"
+            "правило Лопиталя (при необходимости).")
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -228,14 +292,15 @@ def index():
                     expr = sp.sympify(expression)
                     point_val = parse_point(point)
                     
-                    # Вычисление предела
                     if direction == "two-sided":
                         limit_raw = sp.limit(expr, var, point_val, dir='+-')
                     else:
                         limit_raw = sp.limit(expr, var, point_val, dir=direction)
                     
-                    # Красивое отображение результата
-                    if limit_raw == sp.zoo:
+                    # Обработка AccumBounds
+                    if isinstance(limit_raw, sp.AccumBounds):
+                        result = f"не существует (предел колеблется от {limit_raw.min} до {limit_raw.max})"
+                    elif limit_raw == sp.zoo:
                         result = "не существует (комплексная бесконечность)"
                     elif limit_raw == sp.oo:
                         result = "∞"
@@ -244,18 +309,9 @@ def index():
                     else:
                         result = str(limit_raw)
                     
-                    # Пошаговое решение (демонстрационное для sin(x)/x)
-                    if expression == "sin(x)/x" and str(point_val) == "0":
-                        steps = (
-                            "1. Исходный предел: lim (sin(x)/x) при x → 0.\n"
-                            "2. Подстановка x=0 даёт неопределённость 0/0.\n"
-                            "3. Применяем правило Лопиталя: производная числителя cos(x), знаменателя 1.\n"
-                            "4. Новый предел: lim cos(x) при x → 0 = cos(0) = 1.\n"
-                            "5. Ответ: 1."
-                        )
-                    else:
-                        steps = "Пошаговое решение доступно для примера sin(x)/x при x→0."
-                        
+                    # Генерация шагов
+                    steps = generate_steps(expression, variable, point_val, direction, limit_raw)
+                    
                 except Exception as e:
                     error = f"Ошибка при вычислении: {e}"
     
