@@ -1,7 +1,12 @@
 from flask import Flask, render_template_string, request
 import sympy as sp
+import requests
+import json
 
 app = Flask(__name__)
+
+# ЗАМЕНИ ЭТО НА СВОЙ КЛЮЧ:
+GEMINI_API_KEY = "YOUR_API_KEY_HERE"
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -196,18 +201,57 @@ def parse_point(point_str):
         return -sp.oo
     return sp.sympify(p)
 
+def ask_gemini_for_steps(expression, variable, point, direction, result):
+    """Обращается к Google Gemini API за пошаговым решением."""
+    
+    # Формируем запрос к ИИ
+    prompt = f"""
+Ты — гениальный репетитор по математическому анализу. Твоя задача — написать подробное, пошаговое решение для следующего предела.
+
+Условия задачи:
+- Функция: {expression}
+- Переменная: {variable}
+- Стремится к: {point}
+- Направление: {direction}
+- Правильный ответ: {result}
+
+Напиши решение, которое будет понятно студенту. Опиши каждый логический шаг: подстановку, выявление неопределенности, применение правила Лопиталя (если нужно), алгебраические преобразования, вывод.
+Ответ должен быть ТОЛЬКО решением, без лишних вступлений и комментариев.
+"""
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}"
+    headers = {"Content-Type": "application/json"}
+    data = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        json_response = response.json()
+        
+        # Извлекаем текст ответа
+        steps_text = json_response['candidates'][0]['content']['parts'][0]['text']
+        return steps_text
+    except Exception as e:
+        # Если ИИ не ответил, показываем старую заглушку
+        return "Пошаговое решение доступно для примера sin(x)/x при x→0."
+
 def generate_steps(expression, var_str, point_val, direction, limit_raw):
-    """Генерирует текстовое описание шагов для популярных пределов."""
+    """Пытается сгенерировать шаги, а если не получается - зовет ИИ."""
+    
     expr_str = expression.strip()
     var = sp.Symbol(var_str)
-    
+
     # 1. sin(x)/x при x->0
     if expr_str == "sin(x)/x" and point_val == 0:
         return ("1. Подстановка x=0 даёт неопределённость 0/0.\n"
                 "2. Применяем правило Лопиталя: (sin(x))' = cos(x), (x)' = 1.\n"
                 "3. Новый предел: lim cos(x)/1 = cos(0) = 1.\n"
                 "4. Ответ: 1.")
-    
+
     # 2. 1/x при x->0 (разные направления)
     if expr_str == "1/x" and point_val == 0:
         if direction == '+':
@@ -220,49 +264,16 @@ def generate_steps(expression, var_str, point_val, direction, limit_raw):
             return ("1. Слева x→0⁻: 1/x → -∞.\n"
                     "2. Справа x→0⁺: 1/x → +∞.\n"
                     "3. Односторонние пределы различны → двусторонний предел не существует.")
-    
+
     # 3. (1+1/n)^n при n→∞
     if expr_str in ["(1+1/n)**n", "(1+1/n)^n"] and point_val == sp.oo:
         return ("1. Это второй замечательный предел.\n"
                 "2. Известно, что lim_{n→∞} (1+1/n)^n = e.\n"
                 "3. Ответ: e (число Эйлера).")
-    
-    # 4. Полиномиальные/рациональные дроби при x→∞
-    if point_val == sp.oo or point_val == -sp.oo:
-        try:
-            num, den = sp.fraction(sp.sympify(expr_str))
-            if den == 1:
-                # Полином
-                lead = sp.LC(expr_str.subs(var, var))
-                return (f"1. Предел полинома на бесконечности определяется старшим членом.\n"
-                        f"2. Старший член: {lead} * {var}**{sp.degree(expr_str)}.\n"
-                        f"3. При x→∞ это выражение стремится к {'∞' if lead > 0 else '-∞'}.")
-            else:
-                deg_num = sp.degree(num, var)
-                deg_den = sp.degree(den, var)
-                if deg_num < deg_den:
-                    return (f"1. Степень числителя ({deg_num}) меньше степени знаменателя ({deg_den}).\n"
-                            f"2. Предел равен 0.")
-                elif deg_num == deg_den:
-                    coeff = sp.LC(num, var) / sp.LC(den, var)
-                    return (f"1. Степени числителя и знаменателя равны ({deg_num}).\n"
-                            f"2. Предел равен отношению старших коэффициентов: {coeff}.")
-                else:
-                    return (f"1. Степень числителя ({deg_num}) больше степени знаменателя ({deg_den}).\n"
-                            f"2. Предел равен ∞ (знак определяется отношением старших коэффициентов).")
-        except:
-            pass
-    
-    # 5. sin(1/x) при x->0
-    if expr_str == "sin(1/x)" and point_val == 0:
-        return ("1. При x→0 аргумент 1/x неограниченно растёт.\n"
-                "2. Функция sin(t) при t→∞ не имеет предела, она колеблется между -1 и 1.\n"
-                "3. Следовательно, предел не существует (но ограничен в [-1,1]).")
-    
-    # По умолчанию – короткое пояснение
-    return ("Предел вычислен аналитически с помощью библиотеки SymPy.\n"
-            "Использованы правила: арифметика пределов, замечательные пределы,\n"
-            "правило Лопиталя (при необходимости).")
+
+    # Если не один из "захардкоженных" случаев - вызываем ИИ
+    return ask_gemini_for_steps(expression, var_str, point_val, direction, limit_raw)
+
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
