@@ -6,7 +6,7 @@ import json
 app = Flask(__name__)
 
 # ЗАМЕНИ ЭТО НА СВОЙ КЛЮЧ:
-GEMINI_API_KEY = "YOUR_API_KEY_HERE"
+GEMINI_API_KEY = "AIzaSyDOyTqZfSIC47hbWIxiLA-vQad73TvcoV4"
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
