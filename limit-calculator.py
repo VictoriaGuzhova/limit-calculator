@@ -176,15 +176,28 @@ HTML_TEMPLATE = """
 </html>
 """
 
+def is_valid_expression(s, variable):
+    """Проверяет, что строка является корректным математическим выражением с заданной переменной."""
+    try:
+        expr = sp.sympify(s)
+        # Проверяем, что в выражении присутствует переменная (или это константа)
+        free_symbols = expr.free_symbols
+        allowed_symbols = {sp.Symbol(variable)}
+        # Если есть символы, которых нет в разрешённых — ошибка
+        if not free_symbols.issubset(allowed_symbols):
+            other = free_symbols - allowed_symbols
+            return False, f"Выражение содержит посторонние переменные: {', '.join(str(s) for s in other)}"
+        return True, expr
+    except (sp.SympifyError, TypeError, ValueError) as e:
+        return False, f"Не удалось распознать выражение: {e}"
+
 def parse_point(point_str):
     """Преобразует строку с точкой в число или бесконечность SymPy."""
     p = point_str.strip()
-    # Обработка символов бесконечности
     if p in ['∞', '+∞', 'oo', 'inf', 'infinity', 'бесконечность', 'беск']:
         return sp.oo
     if p in ['-∞', '-oo', '-inf', '-infinity', '-бесконечность', '-беск']:
         return -sp.oo
-    # Иначе пытаемся распарсить как число
     return sp.sympify(p)
 
 @app.route('/', methods=['GET', 'POST'])
@@ -206,41 +219,45 @@ def index():
         if not expression or not variable or not point:
             error = "Все поля должны быть заполнены."
         else:
-            try:
-                var = sp.Symbol(variable)
-                expr = sp.sympify(expression)
-                point_val = parse_point(point)
-                
-                # Вычисление предела
-                if direction == "two-sided":
-                    limit_raw = sp.limit(expr, var, point_val, dir='+-')
-                else:
-                    limit_raw = sp.limit(expr, var, point_val, dir=direction)
-                
-                # Красивое отображение результата
-                if limit_raw == sp.zoo:
-                    result = "не существует (комплексная бесконечность)"
-                elif limit_raw == sp.oo:
-                    result = "∞"
-                elif limit_raw == -sp.oo:
-                    result = "-∞"
-                else:
-                    result = str(limit_raw)
-                
-                # Пошаговое решение (демонстрационное для sin(x)/x)
-                if expression == "sin(x)/x" and str(point_val) == "0":
-                    steps = (
-                        "1. Исходный предел: lim (sin(x)/x) при x → 0.\n"
-                        "2. Подстановка x=0 даёт неопределённость 0/0.\n"
-                        "3. Применяем правило Лопиталя: производная числителя cos(x), знаменателя 1.\n"
-                        "4. Новый предел: lim cos(x) при x → 0 = cos(0) = 1.\n"
-                        "5. Ответ: 1."
-                    )
-                else:
-                    steps = "Пошаговое решение доступно для примера sin(x)/x при x→0."
+            valid, msg = is_valid_expression(expression, variable)
+            if not valid:
+                error = msg
+            else:
+                try:
+                    var = sp.Symbol(variable)
+                    expr = sp.sympify(expression)
+                    point_val = parse_point(point)
                     
-            except Exception as e:
-                error = f"Ошибка: {e}"
+                    # Вычисление предела
+                    if direction == "two-sided":
+                        limit_raw = sp.limit(expr, var, point_val, dir='+-')
+                    else:
+                        limit_raw = sp.limit(expr, var, point_val, dir=direction)
+                    
+                    # Красивое отображение результата
+                    if limit_raw == sp.zoo:
+                        result = "не существует (комплексная бесконечность)"
+                    elif limit_raw == sp.oo:
+                        result = "∞"
+                    elif limit_raw == -sp.oo:
+                        result = "-∞"
+                    else:
+                        result = str(limit_raw)
+                    
+                    # Пошаговое решение (демонстрационное для sin(x)/x)
+                    if expression == "sin(x)/x" and str(point_val) == "0":
+                        steps = (
+                            "1. Исходный предел: lim (sin(x)/x) при x → 0.\n"
+                            "2. Подстановка x=0 даёт неопределённость 0/0.\n"
+                            "3. Применяем правило Лопиталя: производная числителя cos(x), знаменателя 1.\n"
+                            "4. Новый предел: lim cos(x) при x → 0 = cos(0) = 1.\n"
+                            "5. Ответ: 1."
+                        )
+                    else:
+                        steps = "Пошаговое решение доступно для примера sin(x)/x при x→0."
+                        
+                except Exception as e:
+                    error = f"Ошибка при вычислении: {e}"
     
     return render_template_string(
         HTML_TEMPLATE,
